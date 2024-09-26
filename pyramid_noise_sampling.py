@@ -51,6 +51,26 @@ def get_ancestral_step(sigma_from, sigma_to, eta=1.):
     return sigma_down, sigma_up
 
 
+def heun_step(x, old_sigma, new_sigma, s_in, model,
+              callback=None, second_order=True, **extra_args):
+    denoised = model(x, old_sigma * s_in, **extra_args)
+    d = sampling.to_d(x, old_sigma, denoised)
+    if callback is not None:
+        callback({'x': x, 'sigma': new_sigma, 'sigma_hat': old_sigma, 'denoised': denoised})
+    dt = new_sigma - old_sigma
+    if new_sigma == 0 or not second_order:
+        # Euler method
+        x = x + d * dt
+    else:
+        # Heun's method
+        x_2 = x + d * dt
+        denoised_2 = model(x_2, new_sigma * s_in, **extra_args)
+        d_2 = sampling.to_d(x_2, new_sigma, denoised_2)
+        d_prime = (d + d_2) / 2
+        x = x + d_prime * dt
+    return x
+
+
 @torch.no_grad()
 def sample_euler_pyramid(model, x, sigmas, extra_args=None, callback=None, disable=None, eta=1., s_noise=1.,
                          noise_sampler=None):
@@ -72,7 +92,9 @@ def sample_euler_pyramid(model, x, sigmas, extra_args=None, callback=None, disab
         x = x + d * dt
         if sigmas[i + 1] > 0:
             # get pyramid noise
-            noise_up = pyramid_noise_like2(noise_sampler(sigmas[i], sigmas[i + 1]))
+            noise_up = pyramid_noise_like2(noise_sampler(sigmas[i], sigmas[i + 1]),
+                                           iterations=8,
+                                           discount=0.15)
             x = x + noise_up * s_noise * sigma_up
     return x
 
@@ -112,9 +134,10 @@ def sample_heun_pyramid(model, x, sigmas, extra_args=None, callback=None, disabl
         if i == 6:
             # get pyramid noise
             noise_up = pyramid_noise_like2(noise_sampler(sigmas[i], sigmas[i + 1]),
-                                           iterations=4,
-                                           discount=0.3)
+                                           iterations=6,
+                                           discount=0.2)
             x = x + noise_up * s_noise * sigma_up
+            x = heun_step(x, sigmas[i], sigmas[i+1], s_in, model, **extra_args)
     return x
 
 
@@ -149,8 +172,8 @@ def sample_dpm_2_pyramid(model, x, sigmas, extra_args=None, callback=None, disab
             x = x + d_2 * dt_2
             # get pyramid noise
             noise_up = pyramid_noise_like2(noise_sampler(sigmas[i], sigmas[i + 1]),
-                                           iterations=4,
-                                           discount=0.3)
+                                           iterations=6,
+                                           discount=0.2)
             x = x + noise_up * s_noise * sigma_up
     return x
 
@@ -190,7 +213,7 @@ def sample_dpmpp_2s_pyramid(model, x, sigmas, extra_args=None, callback=None, di
         if sigmas[i + 1] > 0:
             # get pyramid noise
             noise_up = pyramid_noise_like2(noise_sampler(sigmas[i], sigmas[i + 1]),
-                                           iterations=4,
-                                           discount=0.3)
+                                           iterations=8,
+                                           discount=0.15)
             x = x + noise_up * s_noise * sigma_up
     return x

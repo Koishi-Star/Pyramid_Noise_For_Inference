@@ -26,10 +26,10 @@ https://github.com/Koishi-Star/Pyramid_Noise_For_Inference
 ---
 ## Including
 4 new sampler:
-   - sample_euler_pyramid
-   - sample_heun_pyramid
-   - sample_dpm_2_pyramid
-   - sample_dpmpp_2s_pyramid
+   - sample_euler_pyramid(Base On `Euler a`)
+   - sample_heun_pyramid(Base On `Restart`) *Not Completely Finish* 
+   - sample_dpm_2_pyramid(Base On `DPM++2s a`)
+   - sample_dpmpp_2s_pyramid(Base On `DPM++2M a`)
 
 ---
 
@@ -96,10 +96,14 @@ def sample_euler_a_pyramid3(model, x, sigmas, extra_args=None, callback=None, di
 
 ## Adjust Args
 
-You can adjust two arguments: `iterations` and `discount`. Generally, make sure that `iterations * discount` is less than 2 for the best results.
+You can adjust two arguments: `iterations` and `discount`. 
+Generally, make sure that `iterations * discount` is less than 2 for the best results for Euler pyramid.
+`iterations * discount` is less than 1.2 for the others.
 
-### Example: `iterations=4` and `discount=0.3`
+**maybe some difference with image for different args**
+
+### Example: `iterations=4` and `discount=0.3` Euler pyramid
 ![](img/1.jpg)
 
-### Example: `iterations=5` and `discount=0.4`
+### Example: `iterations=5` and `discount=0.4` Euler pyramid
 ![](img/2.png)
