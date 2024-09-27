@@ -1,6 +1,10 @@
 # Pyramid_Noise_For_Inference
 Using pyramid_noise instead of original noise in inference. / 使用金字塔噪声替代推理中的原始噪声。
 
+Unable to significantly improve lighting effects.I'm sorry... / 不能显著改善光影。对不起...
+
+Author is so tired, it may cost time to response or fix bugs./ 作者最近很累，需要一些时间修复bug或回复，请见谅。
+
 ---
 
 ## Table of Contents
@@ -11,8 +15,8 @@ Using pyramid_noise instead of original noise in inference. / 使用金字塔噪
    - [Change Ancestral Noise](#change-ancestral-noise)
    - [Pyramid Noise Function](#pyramid-noise-function)
 4. [Adjust Args](#adjust-args)
-   - [Example: `iterations=4` and `discount=0.3`](#example-iterations4-and-discount03)
-   - [Example: `iterations=5` and `discount=04`](#example-iterations5-and-discount04)
+   - [Example: Euler pyramid and Euler`](#Euler-pyramid-and-Euler)
+   - [Example: Heun pyramid and DPM++2s pyramid](#Heun-pyramid-and-DPM2s-pyramid)
    
 ---
 
@@ -29,6 +33,11 @@ Unless you want this:
 ![](img/3.png)
 
 **_Also doesn't promise better than the others._**
+
+----
+
+**_But highres can be used._**
+![](img/4.png)
 
 ---
 ## Including
@@ -107,14 +116,16 @@ def sample_euler_a_pyramid3(model, x, sigmas, extra_args=None, callback=None, di
 
 ## Adjust Args
 
-You can adjust two arguments: `iterations` and `discount`. 
+You can adjust two arguments: `iterations` and `discount`(for now no gui). 
 Generally, make sure that `iterations * discount` is less than 2 for the best results for Euler pyramid.
 `iterations * discount` is less than 1.2 for the others.
 
 **maybe some difference with image for different args**
 
-### Example: `iterations=4` and `discount=0.3` Euler pyramid
+### Euler pyramid and Euler
+**step 20**
 ![](img/1.jpg)
 
-### Example: `iterations=5` and `discount=0.4` Euler pyramid
-![](img/2.png)
+### Heun pyramid and DPM2s pyramid
+**step 10**
+![](img/2.jpg)
