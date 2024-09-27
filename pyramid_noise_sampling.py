@@ -2,6 +2,7 @@ from importlib import import_module
 from tqdm.auto import trange
 import torch
 import random
+import tqdm
 
 sampling = None
 BACKEND = None
@@ -21,6 +22,19 @@ if not BACKEND:
         BACKEND = "ComfyUI"
     except ImportError as _:
         pass
+
+
+def get_sigmas_karras(n, sigma_min, sigma_max, rho=7., device='cpu'):
+    """Constructs the noise schedule of Karras et al. (2022)."""
+    ramp = torch.linspace(0, 1, n)
+    min_inv_rho = sigma_min ** (1 / rho)
+    max_inv_rho = sigma_max ** (1 / rho)
+    sigmas = (max_inv_rho + ramp * (min_inv_rho - max_inv_rho)) ** rho
+    return append_zero(sigmas).to(device)
+
+
+def append_zero(x):
+    return torch.cat([x, x.new_zeros([1])])
 
 
 def pyramid_noise_like2(noise, iterations=5, discount=0.4):
@@ -51,26 +65,6 @@ def get_ancestral_step(sigma_from, sigma_to, eta=1.):
     return sigma_down, sigma_up
 
 
-def heun_step(x, old_sigma, new_sigma, s_in, model,
-              callback=None, second_order=True, **extra_args):
-    denoised = model(x, old_sigma * s_in, **extra_args)
-    d = sampling.to_d(x, old_sigma, denoised)
-    if callback is not None:
-        callback({'x': x, 'sigma': new_sigma, 'sigma_hat': old_sigma, 'denoised': denoised})
-    dt = new_sigma - old_sigma
-    if new_sigma == 0 or not second_order:
-        # Euler method
-        x = x + d * dt
-    else:
-        # Heun's method
-        x_2 = x + d * dt
-        denoised_2 = model(x_2, new_sigma * s_in, **extra_args)
-        d_2 = sampling.to_d(x_2, new_sigma, denoised_2)
-        d_prime = (d + d_2) / 2
-        x = x + d_prime * dt
-    return x
-
-
 @torch.no_grad()
 def sample_euler_pyramid(model, x, sigmas, extra_args=None, callback=None, disable=None, eta=1., s_noise=1.,
                          noise_sampler=None):
@@ -80,7 +74,7 @@ def sample_euler_pyramid(model, x, sigmas, extra_args=None, callback=None, disab
     s_in = x.new_ones([x.shape[0]])
     # addition noise to original noise
     addition_noise = torch.randn_like(x)
-    x = x + pyramid_noise_like2(addition_noise)
+    x = x + pyramid_noise_like2(x)
     for i in trange(len(sigmas) - 1, disable=disable):
         denoised = model(x, sigmas[i] * s_in, **extra_args)
         sigma_down, sigma_up = get_ancestral_step(sigmas[i], sigmas[i + 1], eta=eta)
@@ -94,87 +88,84 @@ def sample_euler_pyramid(model, x, sigmas, extra_args=None, callback=None, disab
             # get pyramid noise
             noise_up = pyramid_noise_like2(noise_sampler(sigmas[i], sigmas[i + 1]),
                                            iterations=8,
-                                           discount=0.15)
+                                           discount=0.25)
             x = x + noise_up * s_noise * sigma_up
     return x
 
 
 @torch.no_grad()
-def sample_heun_pyramid(model, x, sigmas, extra_args=None, callback=None, disable=None, s_churn=0., s_tmin=0.,
-                        s_tmax=float('inf'), s_noise=1., eta=1., noise_sampler=None):
-    """Using pyramid noise in heun like Restart"""
+def sample_heun_pyramid(model, x, sigmas, extra_args=None, callback=None, disable=None, s_noise=1., restart_list=None):
     extra_args = {} if extra_args is None else extra_args
-    noise_sampler = default_noise_sampler(x) if noise_sampler is None else noise_sampler
     s_in = x.new_ones([x.shape[0]])
-    # addition noise to original noise
+    step_id = 0
+
     addition_noise = torch.randn_like(x)
-    x = x + pyramid_noise_like2(addition_noise)
-    for i in trange(len(sigmas) - 1, disable=disable):
-        gamma = min(s_churn / (len(sigmas) - 1), 2 ** 0.5 - 1) if s_tmin <= sigmas[i] <= s_tmax else 0.
-        eps = torch.randn_like(x) * s_noise
-        sigma_hat = sigmas[i] * (gamma + 1)
-        if gamma > 0:
-            x = x + eps * (sigma_hat ** 2 - sigmas[i] ** 2) ** 0.5
-        denoised = model(x, sigma_hat * s_in, **extra_args)
-        sigma_down, sigma_up = get_ancestral_step(sigmas[i], sigmas[i + 1], eta=eta)
-        d = sampling.to_d(x, sigma_hat, denoised)
+    x = x + pyramid_noise_like2(x)
+
+    def heun_step(x, old_sigma, new_sigma, second_order=True):
+        nonlocal step_id
+        denoised = model(x, old_sigma * s_in, **extra_args)
+        d = sampling.to_d(x, old_sigma, denoised)
         if callback is not None:
-            callback({'x': x, 'i': i, 'sigma': sigmas[i], 'sigma_hat': sigma_hat, 'denoised': denoised})
-        dt = sigmas[i + 1] - sigma_hat
-        if sigmas[i + 1] == 0:
+            callback({'x': x, 'i': step_id, 'sigma': new_sigma, 'sigma_hat': old_sigma, 'denoised': denoised})
+        dt = new_sigma - old_sigma
+        if new_sigma == 0 or not second_order:
             # Euler method
             x = x + d * dt
         else:
             # Heun's method
             x_2 = x + d * dt
-            denoised_2 = model(x_2, sigmas[i + 1] * s_in, **extra_args)
-            d_2 = sampling.to_d(x_2, sigmas[i + 1], denoised_2)
+            denoised_2 = model(x_2, new_sigma * s_in, **extra_args)
+            d_2 = sampling.to_d(x_2, new_sigma, denoised_2)
             d_prime = (d + d_2) / 2
             x = x + d_prime * dt
-        if i == 6:
-            # get pyramid noise
-            noise_up = pyramid_noise_like2(noise_sampler(sigmas[i], sigmas[i + 1]),
-                                           iterations=6,
-                                           discount=0.2)
-            x = x + noise_up * s_noise * sigma_up
-            x = heun_step(x, sigmas[i], sigmas[i+1], s_in, model, **extra_args)
-    return x
+        step_id += 1
+        return x
 
-
-@torch.no_grad()
-def sample_dpm_2_pyramid(model, x, sigmas, extra_args=None, callback=None, disable=None, eta=1., s_noise=1.,
-                         noise_sampler=None):
-    """pyramid sampling with DPM-Solver second-order steps."""
-    extra_args = {} if extra_args is None else extra_args
-    noise_sampler = default_noise_sampler(x) if noise_sampler is None else noise_sampler
-    s_in = x.new_ones([x.shape[0]])
-    # addition noise to original noise
-    addition_noise = torch.randn_like(x)
-    x = x + pyramid_noise_like2(addition_noise)
-    for i in trange(len(sigmas) - 1, disable=disable):
-        denoised = model(x, sigmas[i] * s_in, **extra_args)
-        sigma_down, sigma_up = get_ancestral_step(sigmas[i], sigmas[i + 1], eta=eta)
-        if callback is not None:
-            callback({'x': x, 'i': i, 'sigma': sigmas[i], 'sigma_hat': sigmas[i], 'denoised': denoised})
-        d = sampling.to_d(x, sigmas[i], denoised)
-        if sigma_down == 0:
-            # Euler method
-            dt = sigma_down - sigmas[i]
-            x = x + d * dt
+    steps = sigmas.shape[0] - 1
+    if restart_list is None:
+        if steps >= 10:
+            restart_steps = 3
+            restart_times = 1
+            if steps >= 20:
+                restart_steps = steps // 4
+                restart_times = 2
+            sigmas = get_sigmas_karras(steps - restart_steps * restart_times, sigmas[-2].item(), sigmas[0].item(),
+                                       device=sigmas.device)
+            restart_list = {0.1: [restart_steps + 1, restart_times, 2]}
         else:
-            # DPM-Solver-2
-            sigma_mid = sigmas[i].log().lerp(sigma_down.log(), 0.5).exp()
-            dt_1 = sigma_mid - sigmas[i]
-            dt_2 = sigma_down - sigmas[i]
-            x_2 = x + d * dt_1
-            denoised_2 = model(x_2, sigma_mid * s_in, **extra_args)
-            d_2 = sampling.to_d(x_2, sigma_mid, denoised_2)
-            x = x + d_2 * dt_2
-            # get pyramid noise
-            noise_up = pyramid_noise_like2(noise_sampler(sigmas[i], sigmas[i + 1]),
-                                           iterations=6,
-                                           discount=0.2)
-            x = x + noise_up * s_noise * sigma_up
+            restart_list = {}
+
+    restart_list = {int(torch.argmin(abs(sigmas - key), dim=0)): value for key, value in restart_list.items()}
+
+    step_list = []
+    for i in range(len(sigmas) - 1):
+        step_list.append((sigmas[i], sigmas[i + 1]))
+        if i + 1 in restart_list:
+            restart_steps, restart_times, restart_max = restart_list[i + 1]
+            min_idx = i + 1
+            max_idx = int(torch.argmin(abs(sigmas - restart_max), dim=0))
+            if max_idx < min_idx:
+                sigma_restart = get_sigmas_karras(restart_steps, sigmas[min_idx].item(), sigmas[max_idx].item(),
+                                                  device=sigmas.device)[:-1]
+                while restart_times > 0:
+                    restart_times -= 1
+                    step_list.extend(zip(sigma_restart[:-1], sigma_restart[1:]))
+
+    last_sigma = None
+    for old_sigma, new_sigma in tqdm.tqdm(step_list, disable=disable):
+        if last_sigma is None:
+            last_sigma = old_sigma
+        elif last_sigma < old_sigma:
+            # print(f"add noise here,sigma is{sigmas}")
+            noise_up = pyramid_noise_like2(torch.randn_like(x),
+                                           iterations=4,
+                                           discount=0.125)
+            x = x + noise_up * s_noise * (old_sigma ** 2 - last_sigma ** 2) ** 0.5
+        x = heun_step(x, old_sigma, new_sigma)
+        # print(f"now old_sigma is {old_sigma},and new_sigma is {new_sigma}")
+        last_sigma = new_sigma
+
     return x
 
 
@@ -189,7 +180,7 @@ def sample_dpmpp_2s_pyramid(model, x, sigmas, extra_args=None, callback=None, di
     t_fn = lambda sigma: sigma.log().neg()
     # addition noise to original noise
     addition_noise = torch.randn_like(x)
-    x = x + pyramid_noise_like2(addition_noise)
+    x = x + pyramid_noise_like2(x)
     for i in trange(len(sigmas) - 1, disable=disable):
         denoised = model(x, sigmas[i] * s_in, **extra_args)
         sigma_down, sigma_up = get_ancestral_step(sigmas[i], sigmas[i + 1], eta=eta)
@@ -214,6 +205,6 @@ def sample_dpmpp_2s_pyramid(model, x, sigmas, extra_args=None, callback=None, di
             # get pyramid noise
             noise_up = pyramid_noise_like2(noise_sampler(sigmas[i], sigmas[i + 1]),
                                            iterations=8,
-                                           discount=0.15)
+                                           discount=0.25)
             x = x + noise_up * s_noise * sigma_up
     return x

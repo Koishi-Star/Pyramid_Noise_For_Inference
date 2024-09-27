@@ -23,12 +23,18 @@ These samplers can be used as an extension for ComfyUI and WebUI from Automatic1
 https://github.com/Koishi-Star/Pyramid_Noise_For_Inference
 ```
 
+**_For now can't be used in image2image, I need time to fix some questions._**
+
+Unless you want this:
+![](img/3.png)
+
+**_Also doesn't promise better than the others._**
+
 ---
 ## Including
-4 new sampler:
+3 new sampler:
    - sample_euler_pyramid(Base On `Euler a`)
-   - sample_heun_pyramid(Base On `Restart`) *Not Completely Finish* 
-   - sample_dpm_2_pyramid(Base On `DPM++2s a`)
+   - sample_heun_pyramid(Base On `Restart`) # using code from restart
    - sample_dpmpp_2s_pyramid(Base On `DPM++2M a`)
 
 ---
@@ -40,11 +46,12 @@ All ancestral steps (like `euler_a`) can be replaced with Pyramid_Noise. You can
 Replace any original noise with pyramid noise:
 ```python
 addition_noise = torch.randn_like(x)
-x = x + pyramid_noise_like2(addition_noise)
+x = x + pyramid_noise_like2(x)
 ```
 
 ### Change Ancestral Noise
 Replace ancestral noise with pyramid noise:
+**_Not always like this specially in second_order method._**
 ```python
 noise_up = pyramid_noise_like2(noise_sampler(sigmas[i], sigmas[i + 1]))
 ```
@@ -76,7 +83,9 @@ def sample_euler_a_pyramid3(model, x, sigmas, extra_args=None, callback=None, di
     noise_sampler = default_noise_sampler(x) if noise_sampler is None else noise_sampler
     s_in = x.new_ones([x.shape[0]])
     addition_noise = torch.randn_like(x)
-    x = x + pyramid_noise_like2(addition_noise)
+    # ------------ check here ---------------
+    x = x + pyramid_noise_like2(x)
+    # ------------ check here ---------------
     for i in trange(len(sigmas) - 1, disable=disable):
         denoised = model(x, sigmas[i] * s_in, **extra_args)
         sigma_down, sigma_up = get_ancestral_step(sigmas[i], sigmas[i + 1], eta=eta)
@@ -87,7 +96,9 @@ def sample_euler_a_pyramid3(model, x, sigmas, extra_args=None, callback=None, di
         dt = sigma_down - sigmas[i]
         x = x + d * dt
         if sigmas[i + 1] > 0:
+            # ------------ check here ---------------
             noise_up = pyramid_noise_like2(noise_sampler(sigmas[i], sigmas[i + 1]))
+            # ------------ check here ---------------
             x = x + noise_up * s_noise * sigma_up
     return x
 ```

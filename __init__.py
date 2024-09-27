@@ -1,5 +1,5 @@
 from . import pyramid_noise_sampling
-from .pyramid_noise_sampling import sample_euler_pyramid, sample_heun_pyramid, sample_dpm_2_pyramid, sample_dpmpp_2s_pyramid
+from .pyramid_noise_sampling import sample_euler_pyramid, sample_heun_pyramid, sample_dpmpp_2s_pyramid
 
 if pyramid_noise_sampling.BACKEND == "ComfyUI":
     if not pyramid_noise_sampling.INITIALIZED:
@@ -8,12 +8,10 @@ if pyramid_noise_sampling.BACKEND == "ComfyUI":
 
         setattr(k_diffusion_sampling, "sample_euler_pyramid", sample_euler_pyramid)
         setattr(k_diffusion_sampling, "sample_heun_pyramid", sample_heun_pyramid)
-        setattr(k_diffusion_sampling, "sample_dpm_2_pyramid", sample_dpm_2_pyramid)
         setattr(k_diffusion_sampling, "sample_dpmpp_2s_pyramid", sample_dpmpp_2s_pyramid)
 
         SAMPLER_NAMES.append("sample_euler_pyramid")
         SAMPLER_NAMES.append("sample_heun_pyramid")
-        SAMPLER_NAMES.append("sample_dpm_2_pyramid")
         SAMPLER_NAMES.append("sample_dpmpp_2s_pyramid")
 
         pyramid_noise_sampling.INITIALIZED = True
