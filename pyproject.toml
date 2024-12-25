@@ -1,0 +1,14 @@
+[project]
+name = "pyramid_noise_for_inference"
+description = "Using pyramid_noise instead of original noise in inference"
+version = "1.0.0"
+license = {file = "LICENSE"}
+
+[project.urls]
+Repository = "https://github.com/Koishi-Star/Pyramid_Noise_For_Inference"
+#  Used by Comfy Registry https://comfyregistry.org
+
+[tool.comfy]
+PublisherId = ""
+DisplayName = "Pyramid_Noise_For_Inference"
+Icon = ""
